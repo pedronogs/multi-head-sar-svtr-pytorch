@@ -32,4 +32,4 @@ class MultiLoss(nn.Module):
 
         sar_loss = self.sar_loss(sar_head_out, label_sar, length)
 
-        return ctc_loss + sar_loss
+        return ctc_loss, sar_loss

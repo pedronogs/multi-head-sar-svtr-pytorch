@@ -25,9 +25,9 @@ class CustomCTCLoss(nn.Module):
     def forward(self, output, label, length):
         output = output.view((output.shape[1], output.shape[0], output.shape[2]))
         N, B, _ = output.shape
-        preds_lengths = torch.tensor([N] * B, dtype=torch.long, device=torch.device('cpu'))
+        preds_lengths = torch.tensor([N] * B, dtype=torch.long)
         labels = label.int()
-        label_lengths = length.long()
+        label_lengths = length.squeeze(dim=1).long()
         loss = self.loss_func(output, labels, preds_lengths, label_lengths)
 
         loss = loss.mean()

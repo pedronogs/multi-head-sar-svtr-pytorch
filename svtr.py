@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from paddle import ParamAttr
-from paddle.nn.initializer import KaimingNormal
 import numpy as np
-import paddle
 from torch import nn
 import torch
 
@@ -38,11 +35,11 @@ def drop_path(x, drop_prob=0., training=False):
 class ConvBNLayer(nn.Module):
 
     def __init__(
-        self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, bias_attr=False, groups=1, act=nn.GELU
+        self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, bias=False, groups=1, act=nn.GELU
     ):
         super().__init__()
         self.conv = nn.Conv2d(
-            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding
+            in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias
         )
         self.norm = nn.BatchNorm2d(out_channels)
         self.act = act()

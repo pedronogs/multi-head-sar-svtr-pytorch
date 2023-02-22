@@ -24,9 +24,7 @@
 #     print(loss)
 
 import torch
-import tqdm
 from torch.utils.data import DataLoader, Dataset
-import segmentation_models_pytorch as smp
 import torchvision.transforms as T
 from PIL import Image
 import numpy as np
@@ -38,8 +36,8 @@ import sys
 from pytorch_lightning.callbacks import ModelCheckpoint
 from multi_head_sar_svtr_model import MultiHeadSARSVTRModel
 from multi_loss import MultiLoss
-import time
 from torchvision.models import regnet_y_800mf
+from mv1_enhanced import MobileNetV1Enhance
 
 
 class RecognitionDataset(Dataset):
@@ -100,11 +98,15 @@ class RecognitionDataset(Dataset):
                         crop = text_image[min_y:max_y, min_x:max_x]
 
                         # Set text crop to top-left of a new image
-                        if crop.shape[0] > 48:
-                            crop = cv2.resize(crop, (crop.shape[1], 48))
+                        try:
+                            if crop.shape[0] > 48:
+                                crop = cv2.resize(crop, (crop.shape[1], 48))
 
-                        if crop.shape[1] > 320:
-                            crop = cv2.resize(crop, (320, crop.shape[0]))
+                            if crop.shape[1] > 320:
+                                crop = cv2.resize(crop, (320, crop.shape[0]))
+                        except Exception as err:
+                            print(err)
+                            continue
 
                         text_crop = np.zeros([48, 320, 3], dtype=np.uint8)
                         text_crop[0:crop.shape[0], 0:crop.shape[1]] = crop
@@ -113,7 +115,9 @@ class RecognitionDataset(Dataset):
                         self.crops.append(text_crop)
                         self.words.append(text)
 
-                if len(self.crops) >= 100:
+                if len(self.crops) % 100 == 0:
+                    print(len(self.crops), flush=True)
+                if len(self.crops) >= 101:
                     break
 
         self.transforms = T.Compose(
@@ -141,7 +145,7 @@ class RecognitionDataset(Dataset):
 
     def SAR_label_encode(self, label):
         sar_characters = self.characters + ['BOS/EOS'] + ['PAD']
-        pad_idx = len(sar_characters) - 2
+        pad_idx = len(sar_characters) - 1
         bos_eos_idx = len(sar_characters) - 2
 
         encoded_label = list()
@@ -165,14 +169,16 @@ class RecognitionDataset(Dataset):
         image_tensor = self.transforms(image)
         ctc_label = self.CTC_label_encode(text)
         sar_label = self.SAR_label_encode(text)
+        length = torch.tensor([len(text)], dtype=torch.long)
 
-        return image_tensor, ctc_label, sar_label, torch.tensor(len(text), dtype=torch.int)
+        return image_tensor, ctc_label, sar_label, length
 
 
 class MultiHeadRecognizer(pl.LightningModule):
 
     def __init__(self, **kwargs):
         super().__init__()
+        self.save_hyperparameters()
         self.model = MultiHeadSARSVTRModel(**kwargs)
         self.loss_fn = MultiLoss()
 
@@ -200,43 +206,59 @@ class MultiHeadRecognizer(pl.LightningModule):
 
         ctc_head_out, sar_head_out = self.model(images_tensor, sar_label)
 
-        loss = self.loss_fn(
+        ctc_loss, sar_loss = self.loss_fn(
             ctc_head_out,
             ctc_label,
             length,
             sar_head_out,
             sar_label,
         )
-        self.log("train_loss", loss)
+        self.log("train_ctc_loss", ctc_loss)
+        self.log("train_sar_loss", sar_loss)
 
-        return loss
+        return ctc_loss + sar_loss
 
     def validation_step(self, batch, batch_idx):
         images_tensor, ctc_label, _, length = batch
 
         ctc_head_out = self.model(images_tensor)
 
-        loss = self.loss_fn(ctc_head_out, ctc_label, length=length)
-        self.log("val_loss", loss)
-
-        return loss
+        ctc_loss, sar_loss = self.loss_fn(ctc_head_out, ctc_label, length=length)
+        self.log("val_ctc_loss", ctc_loss)
+        self.log("val_sar_loss", sar_loss)
 
 
 if __name__ == "__main__":
     dataset = RecognitionDataset(max_text_length=25)
-    dataloader = DataLoader(dataset, batch_size=50, num_workers=1, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=30, num_workers=2, shuffle=True)
 
-    model = MultiHeadRecognizer(in_channels=512, n_characters=len(dataset.get_characters()), max_text_length=25)
+    if len(sys.argv) == 1:
+        model = MultiHeadRecognizer(in_channels=512, n_characters=len(dataset.get_characters()) + 1, max_text_length=25)
 
-    checkpoint_callback = ModelCheckpoint(every_n_epochs=1)
+        checkpoint_callback = ModelCheckpoint(every_n_epochs=1)
 
-    trainer = pl.Trainer(
-        max_epochs=15,
-        accelerator="gpu",
-        devices=1,
-        # check_val_every_n_epoch=1,
-        gradient_clip_val=0.5,
-        gradient_clip_algorithm="norm",
-        # callbacks=[checkpoint_callback]
-    )
-    trainer.fit(model, dataloader)
+        trainer = pl.Trainer(
+            max_epochs=3,
+            accelerator="cuda",
+            devices=1,
+            # check_val_every_n_epoch=1,
+            gradient_clip_val=0.5,
+            gradient_clip_algorithm="norm",
+            # callbacks=[checkpoint_callback]
+        )
+        trainer.fit(model, dataloader)
+    else:
+        model = MultiHeadRecognizer(in_channels=512, n_characters=len(dataset.get_characters()) + 1, max_text_length=25)
+        model = model.load_from_checkpoint("lightning_logs/version_53/checkpoints/epoch=2-step=1368.ckpt")
+
+        model.eval()
+        image_tensor = next(iter(dataloader))[0][0]
+        label = next(iter(dataloader))[1][0]
+        print(label)
+
+        image_tensor = torch.unsqueeze(image_tensor, dim=0)
+
+        output = model(image_tensor)
+        char_idxs = torch.argmax(output, dim=2)
+        char_probs = torch.max(output, dim=2)
+

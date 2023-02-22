@@ -12,7 +12,7 @@ class SVTREncoder(nn.Module):
         dims=64,  # XS
         depth=2,
         hidden_dims=120,
-        use_guide=False,
+        use_guide=True,
         num_heads=8,
         qkv_bias=True,
         mlp_ratio=2.0,

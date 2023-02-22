@@ -17,7 +17,7 @@ from svtr_encoder import SVTREncoder
 from util_layers import Im2Seq
 from ctc_head import CTCHead
 from sar_head import SARHead
-from torchvision.models import regnet_y_800mf
+from mv1_enhanced import MobileNetV1Enhance
 
 
 class MultiHeadSARSVTRModel(nn.Module):
@@ -25,9 +25,8 @@ class MultiHeadSARSVTRModel(nn.Module):
     def __init__(self, in_channels, n_characters, max_text_length=25):
         super().__init__()
 
-        regnet = regnet_y_800mf(weights="RegNet_Y_800MF_Weights.IMAGENET1K_V1")
-        self.backbone = nn.Sequential(regnet.stem, regnet.trunk_output)
-        backbone_out_channels = 784
+        self.backbone = MobileNetV1Enhance()
+        backbone_out_channels = 512
 
         self.sar_head = SARHead(
             in_channels=backbone_out_channels, out_channels=n_characters + 1, max_text_length=max_text_length
